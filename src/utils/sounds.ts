@@ -38,11 +38,17 @@ function playTone(
   startTime = 0,
   freqEnd?: number,
 ): void {
-  const c = getCtx()
-  // Always resume (no-op if already running), then schedule — avoids any
-  // race between state-check and async resume completing.
-  c.resume().then(() => {
-    const t = c.currentTime + startTime
+  try {
+    const c = getCtx()
+    // Kick off resume if suspended — no need to await it.
+    // Web Audio schedules nodes against the audio clock; a future `t`
+    // will fire correctly once the context starts rendering, even if
+    // it is currently suspended.
+    if (c.state !== 'running') c.resume().catch(() => {})
+
+    // 5 ms lookahead gives the context time to start rendering before
+    // the note is due, without any perceptible latency.
+    const t = c.currentTime + 0.005 + startTime
     const osc  = c.createOscillator()
     const gain = c.createGain()
     osc.connect(gain)
@@ -56,7 +62,7 @@ function playTone(
     gain.gain.exponentialRampToValueAtTime(0.001, t + duration)
     osc.start(t)
     osc.stop(t + duration)
-  }).catch(() => {})
+  } catch (_) {}
 }
 
 // SMB coin pickup: quick two-note blip (B5 → E6)

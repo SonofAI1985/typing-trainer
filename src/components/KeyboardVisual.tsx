@@ -149,13 +149,13 @@ export function KeyboardVisual({ expectedKey, lastKey, lastCorrect }: Props) {
           const isFlash  = key.id === flashKeyId
           const surface  =
             isFlash  ? (flashCorrect ? '#22C55E' : '#EF4444') :
-            isExpect ? fColor + 'dd' :
-            fi       ? fColor + '3a' : '#262626'
+            isExpect ? fColor + 'ee' :
+            fi       ? fColor + '55' : '#262626'
           const stroke =
             isFlash  ? (flashCorrect ? '#16A34A' : '#DC2626') :
             isExpect ? fColor :
-            fi       ? fColor + '55' : '#2e2e2e'
-          const labelFill = isFlash || isExpect ? '#fff' : fi ? fColor + 'cc' : '#666'
+            fi       ? fColor + '99' : '#2e2e2e'
+          const labelFill = isFlash || isExpect ? '#fff' : fi ? '#fff' : '#666'
           const fSize = key.w>60?7:key.label.length>4?8:key.label.length>2?9:10
           return (
             <g key={key.id} filter={isExpect?'url(#kglow)':undefined}>
