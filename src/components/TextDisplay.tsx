@@ -7,13 +7,11 @@ interface Props {
 }
 
 export function TextDisplay({ sequence, currentFlatIndex, keyResults }: Props) {
-  // Build a flat index → status map
   const keyStatusMap: Record<number, 'correct' | 'wrong'> = {}
   keyResults.forEach((r, i) => {
     keyStatusMap[i] = r.correct ? 'correct' : 'wrong'
   })
 
-  // Per-item flat key ranges: itemIndex → [startFlat, endFlat)
   const itemRanges: Array<[number, number]> = []
   let cursor = 0
   for (const item of sequence) {
@@ -27,7 +25,6 @@ export function TextDisplay({ sequence, currentFlatIndex, keyResults }: Props) {
         const [start, end] = itemRanges[itemIdx]
 
         if (item.char === ' ') {
-          // Space separator – show as thin gap
           const flatIdx = start
           const isDone = flatIdx < currentFlatIndex
           const isCurrent = flatIdx === currentFlatIndex
@@ -45,7 +42,6 @@ export function TextDisplay({ sequence, currentFlatIndex, keyResults }: Props) {
           )
         }
 
-        // Determine item-level status
         const isDone = end <= currentFlatIndex
         const isCurrent = start <= currentFlatIndex && currentFlatIndex < end
 
@@ -55,16 +51,21 @@ export function TextDisplay({ sequence, currentFlatIndex, keyResults }: Props) {
           ? 'text-yellow-200'
           : 'text-gray-500'
 
+        // For Chinese chars with IME select: last key is the digit, rest are pinyin
+        const pinyinKeyCount = item.hasImeSelect ? item.keys.length - 1 : item.keys.length
+        const imeSelectIdx = item.hasImeSelect ? start + pinyinKeyCount : null
+
         return (
           <div key={itemIdx} className="flex flex-col items-center gap-0.5">
-            {/* Chinese character */}
+            {/* Character */}
             <span className={`text-xl font-bold leading-none ${charColor}`}>
               {item.char}
             </span>
 
-            {/* Pinyin letters */}
-            <div className="flex">
-              {item.keys.map((k, ki) => {
+            {/* Keys row */}
+            <div className="flex items-center gap-px">
+              {/* Pinyin letters */}
+              {item.keys.slice(0, pinyinKeyCount).map((k, ki) => {
                 const flatIdx = start + ki
                 const done = flatIdx < currentFlatIndex
                 const current = flatIdx === currentFlatIndex
@@ -78,13 +79,33 @@ export function TextDisplay({ sequence, currentFlatIndex, keyResults }: Props) {
                 } else {
                   cls += 'text-gray-500'
                 }
+                return <span key={ki} className={cls}>{k}</span>
+              })}
+
+              {/* IME candidate selection digit */}
+              {item.hasImeSelect && imeSelectIdx !== null && (() => {
+                const flatIdx = imeSelectIdx
+                const done = flatIdx < currentFlatIndex
+                const current = flatIdx === currentFlatIndex
+                const status = keyStatusMap[flatIdx]
+
+                const bgColor = done
+                  ? (status === 'correct' ? 'bg-green-700' : 'bg-red-700')
+                  : current
+                  ? 'bg-yellow-500'
+                  : 'bg-gray-700'
+                const textColor = done || current ? 'text-white' : 'text-gray-400'
 
                 return (
-                  <span key={ki} className={cls}>
-                    {k === ' ' ? '␣' : k}
+                  <span
+                    key="ime"
+                    className={`ml-0.5 text-[9px] font-bold leading-none px-1 rounded ${bgColor} ${textColor} ${current ? 'animate-pulse' : ''}`}
+                    title="按数字键选择候选词"
+                  >
+                    ①
                   </span>
                 )
-              })}
+              })()}
             </div>
           </div>
         )

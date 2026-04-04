@@ -30,9 +30,9 @@ function chineseToKeySequence(text: string): KeySequenceItem[] {
     const py = pinyinArray[i] ?? char
 
     if (isChinese(char)) {
-      // Each Chinese character: type its pinyin (no space separator — continuous flow)
-      const keys = py.toLowerCase().split('')
-      result.push({ char, pinyin: py, keys })
+      // Each Chinese character: type pinyin then press '1' to select first candidate
+      const keys = [...py.toLowerCase().split(''), '1']
+      result.push({ char, pinyin: py, keys, hasImeSelect: true })
     } else if (char === ' ') {
       // Explicit space in source text
       result.push({ char: ' ', pinyin: ' ', keys: [' '] })

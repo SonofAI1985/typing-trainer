@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { TEXT_LIBRARY } from '../data/textLibrary'
+import { TEXT_LIBRARY, generateDynamicEntry } from '../data/textLibrary'
 import type { TextEntry } from '../data/textLibrary'
 import type { PracticeMode } from '../types'
 
@@ -123,22 +123,33 @@ export function PracticeSelector({
           </button>
         </div>
       ) : (
-        /* Text selection grid */
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {filtered.map(entry => (
-            <button
-              key={entry.id}
-              onClick={() => onStart(entry)}
-              className="bg-gray-800 hover:bg-gray-700 rounded-xl p-4 text-left transition-colors group"
-            >
-              <div className="text-sm font-medium text-white group-hover:text-blue-300 mb-2">
-                {entry.title}
-              </div>
-              <div className="text-xs text-gray-500 leading-relaxed line-clamp-2">
-                {entry.content.slice(0, 20)}...
-              </div>
-            </button>
-          ))}
+        <div className="flex flex-col gap-3">
+          {/* Random practice button */}
+          <button
+            onClick={() => onStart(generateDynamicEntry(mode as 'chinese' | 'english'))}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-semibold transition-all flex items-center justify-center gap-2"
+          >
+            <span>🎲</span>
+            <span>随机练习（每次内容不同）</span>
+          </button>
+
+          {/* Fixed text grid */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {filtered.map(entry => (
+              <button
+                key={entry.id}
+                onClick={() => onStart(entry)}
+                className="bg-gray-800 hover:bg-gray-700 rounded-xl p-4 text-left transition-colors group"
+              >
+                <div className="text-sm font-medium text-white group-hover:text-blue-300 mb-2">
+                  {entry.title}
+                </div>
+                <div className="text-xs text-gray-500 leading-relaxed line-clamp-2">
+                  {entry.content.slice(0, 20)}...
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
