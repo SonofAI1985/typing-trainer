@@ -92,6 +92,7 @@ export interface UserProfile {
   id: string
   name: string
   color: string
+  avatar?: string        // base64 data URL for custom avatar image
   createdAt: string
   keyStats: Record<string, KeyStat>
   sessions: SessionSummary[]
@@ -101,6 +102,7 @@ export interface UserSummary {
   id: string
   name: string
   color: string
+  avatar?: string
   sessionCount: number
   lastWpm: number | null
 }

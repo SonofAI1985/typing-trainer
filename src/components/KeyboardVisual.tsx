@@ -1,10 +1,16 @@
 import { useMemo, useEffect, useState } from 'react'
 import { KEYBOARD_KEYS } from '../data/keyboardLayout'
+import { MAC_AIR_KEYS, MAC_AIR_WIDTH } from '../data/keyboardLayoutMacAir'
 import { KEY_FINGER_MAP, KEY_TO_ID, FINGER_COLORS } from '../data/fingerMap'
 import type { FingerName } from '../types'
 
-const VW = 1068
+export type KeyboardLayoutType = 'standard' | 'macbook-air'
+
+const VW_STANDARD = 1068
+const VW_MACAIR   = MAC_AIR_WIDTH + 16
 const VH = 295
+const Y0 = 0
+const KH = 36
 
 // Mirror X for left hand transform: translate(MIRROR_X, 0) scale(-1, 1)
 const MIRROR_X = 350
@@ -55,9 +61,13 @@ interface Props {
   expectedKey: string | null
   lastKey: string | null
   lastCorrect: boolean | null
+  layoutType?: KeyboardLayoutType
 }
 
-export function KeyboardVisual({ expectedKey, lastKey, lastCorrect }: Props) {
+export function KeyboardVisual({ expectedKey, lastKey, lastCorrect, layoutType = 'standard' }: Props) {
+  const isMac = layoutType === 'macbook-air'
+  const activeKeys = isMac ? MAC_AIR_KEYS : KEYBOARD_KEYS
+  const VW = isMac ? VW_MACAIR : VW_STANDARD
   const [flashKeyId, setFlashKeyId] = useState<string | null>(null)
   const [flashCorrect, setFlashCorrect] = useState(false)
 
@@ -133,16 +143,30 @@ export function KeyboardVisual({ expectedKey, lastKey, lastCorrect }: Props) {
         </defs>
 
         {/* ── Keyboard body plates ────────────────────────────── */}
-        <rect x="-8"  y="-12" width="332" height="276" rx="16" fill="#141414"/>
-        <rect x="410" y="-12" width="340" height="276" rx="16" fill="#141414"/>
-        <rect x="736" y="-12" width="344" height="276" rx="16" fill="#1a1a1a"/>
-        {[0,1,2].map(i=>(
-          <rect key={i} x={756+i*14} y={-4} width={10} height={5} rx={2}
-                fill={i===0?'#22C55E':'#374151'} opacity={0.7}/>
-        ))}
+        {isMac ? (
+          <>
+            {/* Mac Air: single seamless plate */}
+            <rect x="-8" y="-12" width={VW + 16} height="276" rx="20" fill="#131313"/>
+            {/* Touch ID indicator top-right */}
+            <rect x={VW - 44} y={Y0} width={36} height={KH} rx={8} fill="#1e1e1e" stroke="#333" strokeWidth={1}/>
+            <rect x={VW - 36} y={Y0 + 8} width={20} height={20} rx={10} fill="#222" stroke="#444" strokeWidth={1}/>
+            <text x={VW - 26} y={Y0 + 22} textAnchor="middle" fontSize={7} fill="#555" fontFamily="ui-monospace,monospace">ID</text>
+          </>
+        ) : (
+          <>
+            {/* Standard: split plates + nav/numpad plate */}
+            <rect x="-8"  y="-12" width="332" height="276" rx="16" fill="#141414"/>
+            <rect x="410" y="-12" width="340" height="276" rx="16" fill="#141414"/>
+            <rect x="736" y="-12" width="344" height="276" rx="16" fill="#1a1a1a"/>
+            {[0,1,2].map(i=>(
+              <rect key={i} x={756+i*14} y={-4} width={10} height={5} rx={2}
+                    fill={i===0?'#22C55E':'#374151'} opacity={0.7}/>
+            ))}
+          </>
+        )}
 
         {/* ── Keys ─────────────────────────────────────────────── */}
-        {KEYBOARD_KEYS.map(key => {
+        {activeKeys.map(key => {
           const fi       = KEY_FINGER_MAP[key.id]
           const fColor   = fi?.color ?? '#555555'
           const isExpect = key.id === expectedKeyId

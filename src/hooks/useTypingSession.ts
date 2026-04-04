@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { KeySequenceItem, KeyResult, SessionResult, SessionState, FingerStat } from '../types'
 import { flattenToKeys } from '../utils/pinyin'
 import { KEY_FINGER_MAP, KEY_TO_ID, FINGER_COLORS, FINGER_NAMES } from '../data/fingerMap'
@@ -16,6 +16,7 @@ interface TypingSession {
   flatKeys: FlatKey[]
   keyResults: KeyResult[]
   startTime: number | null
+  endTime: number | null   // frozen at completion — fixes timer-still-running bug
   currentTime: number
 }
 
@@ -28,6 +29,7 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
     flatKeys,
     keyResults: [],
     startTime: null,
+    endTime: null,
     currentTime: Date.now(),
   })
 
@@ -45,6 +47,11 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
       timerRef.current = null
     }
   }, [])
+
+  // Stop the interval via useEffect (not inside a state updater)
+  useEffect(() => {
+    if (session.state === 'complete') stopTimer()
+  }, [session.state])
 
   const handleKeyPress = useCallback((key: string) => {
     setSession(prev => {
@@ -66,27 +73,23 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
       const nextIndex = prev.currentFlatIndex + 1
       const isComplete = nextIndex >= prev.flatKeys.length
 
-      // Start timer on first key press
       let startTime = prev.startTime
       if (!startTime) {
         startTime = now
         startTimer()
       }
 
-      if (isComplete) {
-        stopTimer()
-      }
-
       return {
         ...prev,
         state: isComplete ? 'complete' : 'typing',
         startTime,
+        endTime: isComplete ? now : null,   // freeze the end timestamp
         currentFlatIndex: nextIndex,
         keyResults: newResults,
         currentTime: now,
       }
     })
-  }, [startTimer, stopTimer])
+  }, [startTimer])
 
   const reset = useCallback((newSequence: KeySequenceItem[]) => {
     stopTimer()
@@ -96,12 +99,18 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
       flatKeys: flattenToKeys(newSequence),
       keyResults: [],
       startTime: null,
+      endTime: null,
       currentTime: Date.now(),
     })
   }, [stopTimer])
 
-  // Computed values
-  const elapsed = session.startTime ? session.currentTime - session.startTime : 0
+  // elapsed: frozen at endTime when complete, otherwise live
+  const elapsed = session.endTime
+    ? session.endTime - session.startTime!
+    : session.startTime
+      ? session.currentTime - session.startTime
+      : 0
+
   const correctCount = session.keyResults.filter(r => r.correct).length
   const totalCount = session.keyResults.length
   const wpm = elapsed > 0 ? Math.round((correctCount / 5) / (elapsed / 60000)) : 0
@@ -111,7 +120,6 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
     ? flatKeys[session.currentFlatIndex]?.key ?? null
     : null
 
-  // Build result when complete
   const buildResult = (): SessionResult | null => {
     if (session.state !== 'complete') return null
 
@@ -130,8 +138,6 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
       }
     }
 
-    const keyStats: Record<string, { correct: number; wrong: number }> = {}
-
     for (const result of session.keyResults) {
       const keyId = KEY_TO_ID[result.expected]
       const fi = keyId ? KEY_FINGER_MAP[keyId] : null
@@ -139,9 +145,6 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
         if (result.correct) fingerStats[fi.finger].correct++
         else fingerStats[fi.finger].wrong++
       }
-      if (!keyStats[result.expected]) keyStats[result.expected] = { correct: 0, wrong: 0 }
-      if (result.correct) keyStats[result.expected].correct++
-      else keyStats[result.expected].wrong++
     }
 
     return {
@@ -150,7 +153,7 @@ export function useTypingSession(sequence: KeySequenceItem[]) {
       wpm,
       accuracy,
       keyResults: session.keyResults,
-      duration: elapsed,
+      duration: elapsed,   // elapsed is already frozen via endTime
       fingerStats: Object.values(fingerStats),
     }
   }

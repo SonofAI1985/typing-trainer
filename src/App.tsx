@@ -11,6 +11,7 @@ import { useKeyboard } from './hooks/useKeyboard'
 import { useAdaptiveLearning } from './hooks/useAdaptiveLearning'
 import { useProfile } from './hooks/useProfile'
 import { MusicControl } from './components/MusicControl'
+import type { KeyboardLayoutType } from './components/KeyboardVisual'
 import { textToKeySequence } from './utils/pinyin'
 import { unlockAudio, playCorrect, playWrong, playStreak, playStreakBreak, playComplete, playStart } from './utils/sounds'
 import { bgMusic } from './utils/bgMusic'
@@ -26,6 +27,14 @@ export default function App() {
   const [lastKey, setLastKey] = useState<string | null>(null)
   const [lastCorrect, setLastCorrect] = useState<boolean | null>(null)
   const streakRef = useRef(0)
+  const [keyboardLayout, setKeyboardLayout] = useState<KeyboardLayoutType>(() => {
+    return (localStorage.getItem('keyboard-layout') as KeyboardLayoutType) ?? 'standard'
+  })
+
+  const switchLayout = (l: KeyboardLayoutType) => {
+    setKeyboardLayout(l)
+    localStorage.setItem('keyboard-layout', l)
+  }
 
   const profile = useProfile()
   const adaptive = useAdaptiveLearning(profile.currentUser)
@@ -146,6 +155,7 @@ export default function App() {
               await profile.createUser(name, color)
               setScreen('select')
             }}
+            onUpdate={profile.updateUser}
           />
         )}
 
@@ -210,10 +220,29 @@ export default function App() {
 
             <FingerHint expectedKey={session.expectedKey} />
 
+            {/* Keyboard layout switcher */}
+            <div className="flex items-center gap-2 justify-end">
+              <span className="text-xs text-gray-500">键盘：</span>
+              {(['standard', 'macbook-air'] as KeyboardLayoutType[]).map(l => (
+                <button
+                  key={l}
+                  onClick={() => switchLayout(l)}
+                  className={`text-xs px-2 py-1 rounded transition-colors ${
+                    keyboardLayout === l
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-700 text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {l === 'standard' ? '标准' : 'MacBook Air'}
+                </button>
+              ))}
+            </div>
+
             <KeyboardVisual
               expectedKey={session.expectedKey}
               lastKey={lastKey}
               lastCorrect={lastCorrect}
+              layoutType={keyboardLayout}
             />
 
             {session.state === 'ready' && (

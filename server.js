@@ -25,6 +25,7 @@ app.get('/api/users', (_req, res) => {
         id: data.id,
         name: data.name,
         color: data.color,
+        avatar: data.avatar ?? null,
         sessionCount: data.sessions?.length ?? 0,
         lastWpm: data.sessions?.at(-1)?.wpm ?? null,
       }
@@ -56,6 +57,19 @@ app.post('/api/users', (req, res) => {
     sessions: [],
   }
   fs.writeFileSync(path.join(DATA_DIR, `${id}.json`), JSON.stringify(profile, null, 2))
+  res.json(profile)
+})
+
+// PATCH /api/users/:id — 更新账号信息（名称/颜色/头像）
+app.patch('/api/users/:id', (req, res) => {
+  const file = path.join(DATA_DIR, `${req.params.id}.json`)
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'not found' })
+  const profile = JSON.parse(fs.readFileSync(file, 'utf-8'))
+  const { name, color, avatar } = req.body
+  if (name !== undefined) profile.name = name
+  if (color !== undefined) profile.color = color
+  if (avatar !== undefined) profile.avatar = avatar
+  fs.writeFileSync(file, JSON.stringify(profile, null, 2))
   res.json(profile)
 })
 

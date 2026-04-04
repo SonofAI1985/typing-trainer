@@ -83,6 +83,30 @@ export function useProfile() {
     }
   }, [currentUser])
 
+  const updateUser = useCallback(async (
+    id: string,
+    patch: { name?: string; color?: string; avatar?: string },
+  ): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API}/users/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const updated = await res.json()
+      // Refresh users list summary
+      setUsers(prev => prev.map(u => u.id === id
+        ? { ...u, name: updated.name, color: updated.color, avatar: updated.avatar }
+        : u
+      ))
+      if (currentUser?.id === id) setCurrentUser(updated)
+      return true
+    } catch {
+      return false
+    }
+  }, [currentUser])
+
   const logout = useCallback(() => {
     setCurrentUser(null)
   }, [])
@@ -95,6 +119,7 @@ export function useProfile() {
     loadUsers,
     selectUser,
     createUser,
+    updateUser,
     saveSession,
     logout,
   }
