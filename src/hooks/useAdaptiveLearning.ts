@@ -1,20 +1,25 @@
 import { useState, useCallback } from 'react'
-import type { SessionResult, HistoryEntry } from '../types'
+import type { SessionResult, KeyStat, UserProfile } from '../types'
 import { generatePracticeText } from '../utils/claudeApi'
+import { defaultKeyStat, keyResultToQ, updateKeyStat, selectWeakKeys } from '../utils/sm2'
 
-const STORAGE_KEY = 'typing-trainer-history'
-const STORAGE_KEY_COUNT = 'typing-trainer-session-count'
 const STORAGE_KEY_APIKEY = 'typing-trainer-api-key'
 
-export function useAdaptiveLearning() {
-  const [sessionCount, setSessionCount] = useState<number>(() => {
-    return Number(localStorage.getItem(STORAGE_KEY_COUNT) ?? '0')
-  })
+// All pinyin initials + finals that appear as keys
+const ALL_KEYS = [
+  'b','p','m','f','d','t','n','l','g','k','h',
+  'j','q','x','z','c','s','r','y','w',
+  'zh','ch','sh',
+  'a','o','e','i','u','v',
+  'ai','ei','ui','ao','ou','iu','ie','ue','er',
+  'an','en','in','un','vn',
+  'ang','eng','ing','ong',
+]
 
+export function useAdaptiveLearning(currentUser: UserProfile | null) {
   const [apiKey, setApiKeyState] = useState<string>(() => {
     return localStorage.getItem(STORAGE_KEY_APIKEY) ?? ''
   })
-
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationError, setGenerationError] = useState<string | null>(null)
 
@@ -23,59 +28,38 @@ export function useAdaptiveLearning() {
     localStorage.setItem(STORAGE_KEY_APIKEY, key)
   }, [])
 
-  const saveResult = useCallback((result: SessionResult) => {
-    const history: HistoryEntry[] = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
+  // Compute updated keyStats from a session result using SM-2
+  const computeUpdatedKeyStats = useCallback((
+    result: SessionResult,
+    existingKeyStats: Record<string, KeyStat>,
+  ): Record<string, KeyStat> => {
+    const updated: Record<string, KeyStat> = {}
 
-    const keyStats: Record<string, { correct: number; wrong: number }> = {}
-    for (const r of result.keyResults) {
-      if (!keyStats[r.expected]) keyStats[r.expected] = { correct: 0, wrong: 0 }
-      if (r.correct) keyStats[r.expected].correct++
-      else keyStats[r.expected].wrong++
+    // Group keyResults by expected key with timing info
+    const keyGroups: Record<string, Array<{ correct: boolean; reactionMs: number }>> = {}
+    let prevTimestamp = result.keyResults[0]?.timestamp ?? 0
+
+    for (const kr of result.keyResults) {
+      const reactionMs = kr.timestamp - prevTimestamp
+      prevTimestamp = kr.timestamp
+      if (!keyGroups[kr.expected]) keyGroups[kr.expected] = []
+      keyGroups[kr.expected].push({ correct: kr.correct, reactionMs })
     }
 
-    history.push({
-      date: new Date().toISOString(),
-      wpm: result.wpm,
-      accuracy: result.accuracy,
-      keyStats,
-    })
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history))
-
-    const newCount = sessionCount + 1
-    setSessionCount(newCount)
-    localStorage.setItem(STORAGE_KEY_COUNT, String(newCount))
-  }, [sessionCount])
-
-  // Analyze weak keys from history
-  const getWeakKeys = useCallback((): string[] => {
-    const history: HistoryEntry[] = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
-    if (history.length === 0) return []
-
-    // Aggregate all key stats
-    const aggregate: Record<string, { correct: number; wrong: number }> = {}
-    for (const entry of history) {
-      for (const [key, stats] of Object.entries(entry.keyStats)) {
-        if (!aggregate[key]) aggregate[key] = { correct: 0, wrong: 0 }
-        aggregate[key].correct += stats.correct
-        aggregate[key].wrong += stats.wrong
-      }
+    for (const [key, attempts] of Object.entries(keyGroups)) {
+      const stat = existingKeyStats[key] ?? defaultKeyStat()
+      // Use the worst quality in the session for conservative updating
+      const minQ = Math.min(...attempts.map(a => keyResultToQ(a.correct, a.reactionMs)))
+      updated[key] = updateKeyStat(stat, minQ)
     }
 
-    // Find keys with accuracy < 85%
-    return Object.entries(aggregate)
-      .filter(([, stats]) => {
-        const total = stats.correct + stats.wrong
-        return total >= 3 && (stats.correct / total) < 0.85
-      })
-      .sort((a, b) => {
-        const ra = a[1].correct / (a[1].correct + a[1].wrong)
-        const rb = b[1].correct / (b[1].correct + b[1].wrong)
-        return ra - rb
-      })
-      .slice(0, 8)
-      .map(([key]) => key)
+    return updated
   }, [])
+
+  const getWeakKeys = useCallback((): string[] => {
+    if (!currentUser) return []
+    return selectWeakKeys(currentUser.keyStats, ALL_KEYS, 8)
+  }, [currentUser])
 
   const generateAiText = useCallback(async (): Promise<string | null> => {
     if (!apiKey) {
@@ -85,7 +69,7 @@ export function useAdaptiveLearning() {
 
     const weakKeys = getWeakKeys()
     if (weakKeys.length === 0) {
-      setGenerationError('暂无足够的薄弱键位数据')
+      setGenerationError('暂无足够的弱键数据')
       return null
     }
 
@@ -104,11 +88,13 @@ export function useAdaptiveLearning() {
     }
   }, [apiKey, getWeakKeys])
 
+  const sessionCount = currentUser?.sessions.length ?? 0
+
   return {
     sessionCount,
     apiKey,
     saveApiKey,
-    saveResult,
+    computeUpdatedKeyStats,
     generateAiText,
     isGenerating,
     generationError,

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { PracticeSelector } from './components/PracticeSelector'
+import { ProfileSelector } from './components/ProfileSelector'
 import { TextDisplay } from './components/TextDisplay'
 import { KeyboardVisual } from './components/KeyboardVisual'
 import { FingerHint } from './components/FingerHint'
@@ -8,30 +9,34 @@ import { ResultsScreen } from './components/ResultsScreen'
 import { useTypingSession } from './hooks/useTypingSession'
 import { useKeyboard } from './hooks/useKeyboard'
 import { useAdaptiveLearning } from './hooks/useAdaptiveLearning'
+import { useProfile } from './hooks/useProfile'
+import { MusicControl } from './components/MusicControl'
 import { textToKeySequence } from './utils/pinyin'
-import { unlockAudio, playCorrect, playWrong, playStreak, playComplete, playStart } from './utils/sounds'
+import { unlockAudio, playCorrect, playWrong, playStreak, playStreakBreak, playComplete, playStart } from './utils/sounds'
+import { bgMusic } from './utils/bgMusic'
 import type { TextEntry } from './data/textLibrary'
 import type { KeySequenceItem } from './types'
 
-type AppScreen = 'select' | 'practice' | 'results'
+type AppScreen = 'profile' | 'select' | 'practice' | 'results'
 
 export default function App() {
-  const [screen, setScreen] = useState<AppScreen>('select')
+  const [screen, setScreen] = useState<AppScreen>('profile')
   const [sequence, setSequence] = useState<KeySequenceItem[]>([])
   const [currentEntry, setCurrentEntry] = useState<TextEntry | null>(null)
   const [lastKey, setLastKey] = useState<string | null>(null)
   const [lastCorrect, setLastCorrect] = useState<boolean | null>(null)
   const streakRef = useRef(0)
 
-  const adaptive = useAdaptiveLearning()
+  const profile = useProfile()
+  const adaptive = useAdaptiveLearning(profile.currentUser)
   const session = useTypingSession(sequence)
 
-  // Use a ref to get the current expected key at the moment of keypress
   const expectedKeyRef = useRef<string | null>(null)
   expectedKeyRef.current = session.expectedKey
 
   const handleKeyPress = useCallback((key: string) => {
-    unlockAudio()  // synchronously unlock AudioContext on every keydown
+    unlockAudio()
+    bgMusic.setState('typing')
     const expected = expectedKeyRef.current
     const correct = expected === key
     session.handleKeyPress(key)
@@ -47,8 +52,13 @@ export default function App() {
         playCorrect()
       }
     } else {
+      const prevStreak = streakRef.current
       streakRef.current = 0
-      playWrong()
+      if (prevStreak >= 10) {
+        playStreakBreak()
+      } else {
+        playWrong()
+      }
     }
   }, [session])
 
@@ -60,9 +70,27 @@ export default function App() {
   // Transition to results when complete
   useEffect(() => {
     if (session.state === 'complete' && screen === 'practice') {
+      bgMusic.stop()
       playComplete()
-      if (session.result) {
-        adaptive.saveResult(session.result)
+      if (session.result && profile.currentUser) {
+        const updatedKeyStats = adaptive.computeUpdatedKeyStats(
+          session.result,
+          profile.currentUser.keyStats,
+        )
+        const weakKeys = session.result.keyResults
+          .filter(kr => !kr.correct)
+          .reduce((acc: Record<string, number>, kr) => {
+            acc[kr.expected] = (acc[kr.expected] ?? 0) + 1
+            return acc
+          }, {})
+        const sessionSummary = {
+          date: new Date().toISOString(),
+          wpm: session.result.wpm,
+          accuracy: session.result.accuracy,
+          duration: session.result.duration,
+          weakKeys: Object.entries(weakKeys).filter(([, c]) => c >= 2).map(([k]) => k),
+        }
+        profile.saveSession(sessionSummary, updatedKeyStats)
       }
       const t = setTimeout(() => setScreen('results'), 800)
       return () => clearTimeout(t)
@@ -70,7 +98,7 @@ export default function App() {
   }, [session.state, screen])
 
   const startPractice = useCallback((entry: TextEntry, seq?: KeySequenceItem[]) => {
-    unlockAudio()  // unlock on the click gesture that starts practice
+    unlockAudio()
     const finalSeq = seq ?? textToKeySequence(entry.content, entry.mode)
     setSequence(finalSeq)
     setCurrentEntry(entry)
@@ -79,6 +107,7 @@ export default function App() {
     setLastCorrect(null)
     streakRef.current = 0
     playStart()
+    bgMusic.start('ready')
     setScreen('practice')
   }, [session])
 
@@ -103,27 +132,66 @@ export default function App() {
     <div className="min-h-screen bg-gray-900 text-gray-100">
       <div className="max-w-5xl mx-auto px-4 py-6 flex flex-col gap-5">
 
-        {screen === 'select' && (
-          <PracticeSelector
-            onStart={startPractice}
-            onAiStart={startAiPractice}
-            apiKey={adaptive.apiKey}
-            onSaveApiKey={adaptive.saveApiKey}
-            aiUnlocked={adaptive.aiUnlocked}
-            sessionCount={adaptive.sessionCount}
-            isGenerating={adaptive.isGenerating}
-            generationError={adaptive.generationError}
+        {screen === 'profile' && (
+          <ProfileSelector
+            users={profile.users}
+            loading={profile.loading}
+            error={profile.error}
+            onLoad={profile.loadUsers}
+            onSelect={async (id) => {
+              await profile.selectUser(id)
+              setScreen('select')
+            }}
+            onCreate={async (name, color) => {
+              await profile.createUser(name, color)
+              setScreen('select')
+            }}
           />
+        )}
+
+        {screen === 'select' && (
+          <>
+            {profile.currentUser && (
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white"
+                  style={{ backgroundColor: profile.currentUser.color }}
+                >
+                  {profile.currentUser.name.slice(0, 1).toUpperCase()}
+                </div>
+                <span className="text-gray-300 text-sm">{profile.currentUser.name}</span>
+                <button
+                  onClick={() => { profile.logout(); setScreen('profile') }}
+                  className="ml-auto text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                >
+                  切换账号
+                </button>
+              </div>
+            )}
+            <PracticeSelector
+              onStart={startPractice}
+              onAiStart={startAiPractice}
+              apiKey={adaptive.apiKey}
+              onSaveApiKey={adaptive.saveApiKey}
+              aiUnlocked={adaptive.aiUnlocked}
+              sessionCount={adaptive.sessionCount}
+              isGenerating={adaptive.isGenerating}
+              generationError={adaptive.generationError}
+            />
+          </>
         )}
 
         {screen === 'practice' && (
           <>
-            <button
-              onClick={() => setScreen('select')}
-              className="self-start text-sm text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              ← 返回选择
-            </button>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => { bgMusic.stop(); setScreen('select') }}
+                className="text-sm text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                ← 返回选择
+              </button>
+              <MusicControl />
+            </div>
 
             <TextDisplay
               sequence={sequence}

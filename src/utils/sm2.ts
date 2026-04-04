@@ -1,13 +1,6 @@
 // src/utils/sm2.ts
-
-export interface KeyStat {
-  interval: number       // 下次复习间隔（天），初始 1
-  repetitions: number    // 连续答对次数，初始 0
-  ef: number             // 难度因子，初始 2.5，最低 1.3
-  nextReview: string     // ISO 日期字符串
-  totalCorrect: number
-  totalWrong: number
-}
+import type { KeyStat } from '../types'
+export type { KeyStat }
 
 export function defaultKeyStat(): KeyStat {
   return {

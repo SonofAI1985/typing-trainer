@@ -1,4 +1,4 @@
-// Web Audio API — Mario Bros retro sounds
+// Web Audio API — Mario Bros retro sounds with escalating streak system
 
 let ctx: AudioContext | null = null
 
@@ -40,14 +40,7 @@ function playTone(
 ): void {
   try {
     const c = getCtx()
-    // Kick off resume if suspended — no need to await it.
-    // Web Audio schedules nodes against the audio clock; a future `t`
-    // will fire correctly once the context starts rendering, even if
-    // it is currently suspended.
     if (c.state !== 'running') c.resume().catch(() => {})
-
-    // 5 ms lookahead gives the context time to start rendering before
-    // the note is due, without any perceptible latency.
     const t = c.currentTime + 0.005 + startTime
     const osc  = c.createOscillator()
     const gain = c.createGain()
@@ -76,17 +69,6 @@ export function playWrong(): void {
   playTone(230, 0.12, 'square', 0.30, 0, 90)
 }
 
-// SMB 1-Up jingle: 6 ascending notes (B4 D5 F#5 B5 D6 F#6)
-const ONE_UP = [494, 587, 740, 988, 1175, 1480]
-export function playStreak(level: number): void {
-  const count = Math.min(level + 2, ONE_UP.length)
-  let t = 0
-  for (let i = 0; i < count; i++) {
-    playTone(ONE_UP[i], 0.08, 'square', 0.20, t)
-    t += 0.09
-  }
-}
-
 // SMB stage-clear fanfare
 export function playComplete(): void {
   const seq: [number, number][] = [
@@ -108,4 +90,75 @@ export function playStart(): void {
     playTone(f, 0.06, 'square', 0.20, t)
     t += 0.07
   }
+}
+
+// ─── Escalating Streak System ──────────────────────────────────────────────
+//
+// level 1 (streak  5): SMB 1-Up, 6 notes, normal speed
+// level 2 (streak 10): 1-Up transposed up one semitone
+// level 3 (streak 20): double-time 1-Up
+// level 4 (streak 30): SMB star power sweep (fast scan up)
+// level 5 (streak 50): star sweep + harmony layer
+//
+// streak breaks: dramatic descending crash
+
+const ONE_UP = [494, 587, 740, 988, 1175, 1480]
+
+function semitone(freq: number, steps: number) {
+  return freq * Math.pow(2, steps / 12)
+}
+
+// Base 1-Up jingle (adjustable pitch and speed)
+function playOneUp(pitchShift = 0, speed = 1.0, gainMult = 1.0): void {
+  const notes = ONE_UP.map(f => semitone(f, pitchShift))
+  let t = 0
+  const step = 0.09 / speed
+  for (let i = 0; i < notes.length; i++) {
+    playTone(notes[i], 0.08, 'square', 0.20 * gainMult, t)
+    t += step
+  }
+}
+
+// Star power: fast ascending sweep (all 12 notes of a scale)
+function playStarSweep(gainMult = 1.0): void {
+  const base = 330
+  let t = 0
+  for (let i = 0; i < 12; i++) {
+    const f = semitone(base, i * 2)
+    playTone(f, 0.05, 'sawtooth', 0.18 * gainMult, t)
+    t += 0.04
+  }
+}
+
+// Harmony layer for level 5 (a fifth above)
+function playHarmony(): void {
+  const notes = ONE_UP.map(f => semitone(f, 7))
+  let t = 0
+  for (const freq of notes) {
+    playTone(freq, 0.08, 'triangle', 0.12, t)
+    t += 0.04
+  }
+}
+
+export function playStreak(level: number): void {
+  // level = Math.floor(streak / 5), so:
+  //   streak  5 → level 1
+  //   streak 10 → level 2
+  //   streak 20 → level 4
+  //   streak 30 → level 6
+  //   streak 50 → level 10
+  if (level <= 1)  return playOneUp(0, 1.0)
+  if (level === 2) return playOneUp(1, 1.0)           // +1 semitone
+  if (level <= 3)  return playOneUp(2, 1.6)           // +2 st, double-time
+  if (level <= 5)  return playStarSweep(1.0)          // star power
+  // level 6+ (streak 30+): star sweep + harmony
+  playStarSweep(1.0)
+  playHarmony()
+}
+
+// Streak break: dramatic falling crash
+export function playStreakBreak(): void {
+  playTone(440, 0.08, 'sawtooth', 0.30, 0)
+  playTone(330, 0.08, 'sawtooth', 0.28, 0.08)
+  playTone(220, 0.12, 'sawtooth', 0.25, 0.16, 80)
 }

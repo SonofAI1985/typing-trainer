@@ -70,3 +70,37 @@ export interface HistoryEntry {
 }
 
 export type PracticeMode = 'chinese' | 'english' | 'ai'
+
+export interface KeyStat {
+  interval: number       // next review interval in days
+  repetitions: number    // consecutive correct count
+  ef: number             // easiness factor, init 2.5, min 1.3
+  nextReview: string     // ISO date
+  totalCorrect: number
+  totalWrong: number
+}
+
+export interface SessionSummary {
+  date: string
+  wpm: number
+  accuracy: number
+  duration: number
+  weakKeys: string[]
+}
+
+export interface UserProfile {
+  id: string
+  name: string
+  color: string
+  createdAt: string
+  keyStats: Record<string, KeyStat>
+  sessions: SessionSummary[]
+}
+
+export interface UserSummary {
+  id: string
+  name: string
+  color: string
+  sessionCount: number
+  lastWpm: number | null
+}
