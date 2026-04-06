@@ -7,6 +7,10 @@ if [ ! -d "node_modules" ]; then
   npm install
 fi
 
+# Kill any old server instances (stale processes use outdated code)
+pkill -f "node server.js" 2>/dev/null
+sleep 0.5
+
 # Start backend
 node server.js &
 SERVER_PID=$!
