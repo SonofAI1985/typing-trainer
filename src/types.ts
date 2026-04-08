@@ -33,9 +33,11 @@ export interface KeySequenceItem {
   char: string
   pinyin: string
   keys: string[]
-  // For Chinese characters: the last key is an IME candidate number (e.g. '1').
+  // For Chinese characters: the last key is an IME candidate number (e.g. '1', '2', ...).
   // hasImeSelect=true means keys[keys.length-1] is a digit selector, not a pinyin letter.
   hasImeSelect?: boolean
+  // Ordered candidate list (up to 9) for the IME bar display
+  candidates?: string[]
 }
 
 export interface KeyResult {

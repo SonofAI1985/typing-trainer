@@ -163,12 +163,21 @@ export default function App() {
           <>
             {profile.currentUser && (
               <div className="flex items-center gap-3">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white"
-                  style={{ backgroundColor: profile.currentUser.color }}
-                >
-                  {profile.currentUser.name.slice(0, 1).toUpperCase()}
-                </div>
+                {profile.currentUser.avatar ? (
+                  <img
+                    src={profile.currentUser.avatar}
+                    alt={profile.currentUser.name}
+                    className="w-8 h-8 rounded-full object-cover"
+                    style={{ border: `2px solid ${profile.currentUser.color}` }}
+                  />
+                ) : (
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white"
+                    style={{ backgroundColor: profile.currentUser.color }}
+                  >
+                    {profile.currentUser.name.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
                 <span className="text-gray-300 text-sm">{profile.currentUser.name}</span>
                 <button
                   onClick={() => { profile.logout(); setScreen('profile') }}
