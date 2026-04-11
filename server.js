@@ -85,4 +85,16 @@ app.post('/api/users/:id/save', (req, res) => {
   res.json({ ok: true })
 })
 
-app.listen(3001, () => console.log('typing-trainer server running on http://localhost:3001'))
+// Serve built frontend (dist/) — eliminates need for a separate Vite process
+const DIST = path.join(__dirname, 'dist')
+if (fs.existsSync(DIST)) {
+  const INDEX = path.join(DIST, 'index.html')
+  app.use(express.static(DIST, { index: false }))
+  // SPA: all routes serve index.html
+  app.use((_req, res) => res.sendFile(INDEX))
+  console.log('Serving frontend from dist/')
+} else {
+  console.log('dist/ not found — run "npm run build" first, or use Vite dev server on :5173')
+}
+
+app.listen(3001, () => console.log('typing-trainer running at http://localhost:3001'))
