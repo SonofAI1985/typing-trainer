@@ -1,8 +1,10 @@
-import { pinyin as getPinyin } from 'pinyin-pro'
+import { pinyin as getPinyin, segment as getWords } from 'pinyin-pro'
 import type { KeySequenceItem } from '../types'
 import candidatesData from '../data/pinyinCandidates.json'
+import phraseData from '../data/phraseCandidates.json'
 
 const CANDIDATES = candidatesData as Record<string, string[]>
+const PHRASES = phraseData as Record<string, { word: string; frequency: number }[]>
 
 // Strip tone marks from pinyin to get base form (e.g. "tiān" -> "tian")
 function stripTones(s: string): string {
@@ -27,6 +29,21 @@ export function getCandidateNum(char: string, basePinyin: string): string {
   return String(idx + 1)   // 1-based
 }
 
+// Return phrase candidates for given concatenated base pinyin (e.g., "jutou")
+// Returns list of words sorted by frequency descending
+export function getPhraseCandidates(basePinyin: string): string[] {
+  const phraseList = PHRASES[basePinyin] ?? []
+  return phraseList.map(p => p.word)
+}
+
+// Return phrase number to press for a given word and its concatenated pinyin
+export function getPhraseCandidateNum(word: string, basePinyin: string): string {
+  const list = PHRASES[basePinyin] ?? []
+  const idx = list.findIndex(p => p.word === word)
+  if (idx < 0) return '1'
+  return String(idx + 1)   // 1-based
+}
+
 function isChinese(char: string): boolean {
   return /[\u4e00-\u9fff]/.test(char)
 }
@@ -39,31 +56,97 @@ export function textToKeySequence(text: string, mode: 'chinese' | 'english'): Ke
 function chineseToKeySequence(text: string): KeySequenceItem[] {
   const result: KeySequenceItem[] = []
 
-  const pinyinArray = getPinyin(text, {
-    toneType: 'none',
-    type: 'array',
-    nonZh: 'consecutive',
-  }) as string[]
+  // Step 1: Try to segment into meaningful words using pinyin-pro
+  const rawSegments = getWords(text) as { origin: string; result: string }[]
+  const segments = rawSegments.map(s => s.origin).filter(s => s !== ' ' && !s.match(/[^\u4e00-\u9fff\s]/))
 
-  const chars = Array.from(text)
-
-  for (let i = 0; i < chars.length; i++) {
-    const char = chars[i]
-    const py = pinyinArray[i] ?? char
-
-    if (isChinese(char)) {
-      const base = stripTones(py.toLowerCase())
-      const numKey = getCandidateNum(char, base)
-      const keys = [...base.split(''), numKey]
-      // Store the full candidate list so TextDisplay can render the candidate bar
-      const candidates = getCandidates(base)
-      result.push({ char, pinyin: py, keys, hasImeSelect: true, candidates })
-    } else if (char === ' ') {
-      result.push({ char: ' ', pinyin: ' ', keys: [' '] })
-    } else if (char.match(/[a-zA-Z0-9]/)) {
-      result.push({ char, pinyin: char.toLowerCase(), keys: [char.toLowerCase()] })
+  // Process unsegmentable parts as individual characters
+  if (segments.length === 0) {
+    const chars = Array.from(text).filter(c => c !== ' ')
+    for (const char of chars) {
+      if (isChinese(char)) {
+        const charPinyin = getPinyin(char)
+        if (charPinyin.length > 0) {
+          const basePy = stripTones(charPinyin[0])
+          const numKey = getCandidateNum(char, basePy)
+          const keys = [...basePy.split(''), numKey]
+          result.push({
+            char,
+            pinyin: charPinyin[0],
+            keys,
+            hasImeSelect: true,
+            candidates: getCandidates(basePy)
+          })
+        }
+      }
     }
-    // Skip punctuation
+    return result
+  }
+
+  // Step 2: Find ranges of the text covered by segments
+  let index = 0
+  for (const word of segments) {
+    // Skip any non-Chinese characters that might have been left unprocessed
+    while (index < text.length && !isChinese(text[index])) {
+      const char = text[index]
+      if (char === ' ') {
+        result.push({ char: ' ', pinyin: ' ', keys: [' '] })
+      } else if (char.match(/[a-zA-Z0-9]/)) {
+        result.push({ char, pinyin: char.toLowerCase(), keys: [char.toLowerCase()] })
+      }
+      index++
+    }
+
+    // Process the word
+    if (index >= text.length) continue
+
+    const wordLen = [...word].length
+    const wordText = text.slice(index, index + wordLen)
+
+    // Try phrase mode if word is > 1 char and has phrase candidates
+    let wordProcessed = false
+    if (wordLen >= 2) {
+      const wordPinyin = getPinyin(word, { toneType: 'none', type: 'string' }).replace(/\s+/g, '')
+      const phraseCandidates = getPhraseCandidates(wordPinyin)
+
+      if (phraseCandidates.length > 0 && phraseCandidates.some(c => c === word)) {
+        // Phrase mode: single number select for entire word
+        const numKey = getPhraseCandidateNum(word, wordPinyin)
+        const keys = [...wordPinyin.split(''), numKey]
+        result.push({
+          char: word,
+          pinyin: wordPinyin,
+          keys,
+          hasImeSelect: true,
+          candidates: phraseCandidates.slice(0, 9)
+        })
+        wordProcessed = true
+      }
+    }
+
+    // If phrase mode failed, fall back to character-by-character
+    if (!wordProcessed) {
+      for (let i = 0; i < wordLen; i++) {
+        const char = wordText[i]
+        if (isChinese(char)) {
+          const charPinyin = getPinyin(char)
+          if (charPinyin.length > 0) {
+            const basePy = stripTones(charPinyin[0])
+            const numKey = getCandidateNum(char, basePy)
+            const keys = [...basePy.split(''), numKey]
+            result.push({
+              char,
+              pinyin: charPinyin[0],
+              keys,
+              hasImeSelect: true,
+              candidates: getCandidates(basePy)
+            })
+          }
+        }
+      }
+    }
+
+    index += wordLen
   }
 
   return result
