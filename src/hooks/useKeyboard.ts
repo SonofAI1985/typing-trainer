@@ -24,6 +24,12 @@ export function useKeyboard(
       // Prevent default to stop browser/IME from intercepting
       e.preventDefault()
 
+      // Backspace — pass through for IME buffer editing
+      if (e.key === 'Backspace') {
+        onKeyPress('backspace')
+        return
+      }
+
       const key = e.key === ' ' ? ' ' : e.key.toLowerCase()
 
       // Only handle printable single characters and space

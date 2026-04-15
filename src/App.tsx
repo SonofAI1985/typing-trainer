@@ -44,6 +44,12 @@ export default function App() {
   expectedKeyRef.current = session.expectedKey
 
   const handleKeyPress = useCallback((key: string) => {
+    // Backspace only affects the IME buffer — no audio or streak changes
+    if (key === 'backspace') {
+      session.handleKeyPress(key)
+      return
+    }
+
     unlockAudio()
     bgMusic.setState('typing')
     const expected = expectedKeyRef.current
@@ -214,15 +220,17 @@ export default function App() {
 
             <TextDisplay
               sequence={sequence}
-              currentFlatIndex={session.currentFlatIndex}
-              keyResults={session.keyResults}
+              currentIndex={session.currentIndex}
+              itemResults={session.itemResults}
+              imeBuffer={session.imeBuffer}
+              imeCandidates={session.imeCandidates}
             />
 
             <StatsBar
               wpm={session.wpm}
               accuracy={session.accuracy}
-              currentFlatIndex={session.currentFlatIndex}
-              totalKeys={session.totalKeys}
+              currentFlatIndex={session.currentIndex}
+              totalKeys={session.totalItems}
               elapsed={session.elapsed}
               state={session.state}
             />

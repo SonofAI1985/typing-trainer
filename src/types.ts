@@ -30,14 +30,20 @@ export interface FingerInfo {
 }
 
 export interface KeySequenceItem {
+  /** Display character(s) — may be multi-char for a phrase (e.g. "你好"). */
   char: string
+  /** Expected tone-stripped pinyin (e.g. "nihao"). For English/space this equals char. */
   pinyin: string
-  keys: string[]
-  // For Chinese characters: the last key is an IME candidate number (e.g. '1', '2', ...).
-  // hasImeSelect=true means keys[keys.length-1] is a digit selector, not a pinyin letter.
-  hasImeSelect?: boolean
-  // Ordered candidate list (up to 9) for the IME bar display
-  candidates?: string[]
+  /** Item type drives how the session handles key input. */
+  type: 'chinese' | 'english' | 'space'
+}
+
+/** Per-item result (one per char/word committed in a session). */
+export interface ItemResult {
+  itemIndex: number
+  /** The committed string — may differ from char if user selected wrong candidate. */
+  committed: string
+  correct: boolean
 }
 
 export interface KeyResult {
