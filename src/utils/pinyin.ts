@@ -1,9 +1,6 @@
 import { pinyin as getPinyin, segment as getWords } from 'pinyin-pro'
 import type { KeySequenceItem } from '../types'
-import phraseData from '../data/phraseCandidates.json'
-
-const PHRASES: Record<string, { word: string; frequency: number }[]> =
-  phraseData as Record<string, { word: string; frequency: number }[]>
+import { getCandidates } from '../core/imeEngine'
 
 function isChinese(char: string): boolean {
   return /[\u4e00-\u9fff]/.test(char)
@@ -64,8 +61,8 @@ function chineseToItems(text: string): KeySequenceItem[] {
 
     if (chars.length >= 2) {
       const pinyin = wordBasePinyin(seg)
-      // Use phrase mode if this word appears in the phrase dictionary
-      if (PHRASES[pinyin]?.some(p => p.word === seg)) {
+      // Use phrase mode if this word appears in the IME engine's candidates
+      if (getCandidates(pinyin).includes(seg)) {
         result.push({ char: seg, pinyin, type: 'chinese' })
         continue
       }

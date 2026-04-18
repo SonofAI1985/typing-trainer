@@ -1,55 +1,30 @@
-import candidatesData from '../data/pinyinCandidates.json'
-import phraseData from '../data/phraseCandidates.json'
+import { createPinyinEngine } from 'pinyin-ime'
+import { dict } from 'pinyin-ime/dictionary/google_pinyin_dict'
+import type { CandidateItem } from 'pinyin-ime'
 
-const SINGLE: Record<string, string[]> = candidatesData as Record<string, string[]>
-const PHRASES: Record<string, { word: string; frequency: number }[]> =
-  phraseData as Record<string, { word: string; frequency: number }[]>
+// ── Singleton engine instance ────────────────────────────────────────────────
+
+const engine = createPinyinEngine(dict)
+
+// ── Public helpers (same signatures as before) ───────────────────────────────
 
 /**
- * Generate an ordered candidate list for the given pinyin buffer.
- * Priority: direct phrase match > single-char match > split-pair combinations.
+ * Generate an ordered candidate list (strings only) for the given pinyin buffer.
+ * Delegates to pinyin-ime's engine which handles syllable segmentation,
+ * trie prefix lookup, and frequency-based ranking.
  */
 export function getCandidates(buffer: string): string[] {
   if (!buffer) return []
+  const result = engine.getCandidates(buffer)
+  return result.candidates.slice(0, 9).map(c => c.word)
+}
 
-  type Scored = { word: string; score: number }
-  const scored: Scored[] = []
-  const seen = new Set<string>()
-
-  const add = (word: string, score: number) => {
-    if (!seen.has(word)) { seen.add(word); scored.push({ word, score }) }
-  }
-
-  // 1. Direct phrase match (highest priority)
-  for (const p of PHRASES[buffer] ?? []) add(p.word, p.frequency + 10_000)
-
-  // 2. Direct single-char match
-  ;(SINGLE[buffer] ?? []).forEach((c, i) => add(c, 1000 - i * 10))
-
-  // 3. Split into two segments and combine top candidates from each side
-  for (let i = 1; i < buffer.length; i++) {
-    const left = buffer.slice(0, i)
-    const right = buffer.slice(i)
-
-    const lefts = [
-      ...(PHRASES[left]?.map(p => p.word) ?? []),
-      ...(SINGLE[left] ?? []),
-    ].slice(0, 3)
-
-    const rights = [
-      ...(PHRASES[right]?.map(p => p.word) ?? []),
-      ...(SINGLE[right] ?? []),
-    ].slice(0, 3)
-
-    if (lefts.length && rights.length) {
-      for (const l of lefts)
-        for (const r of rights)
-          add(l + r, 100)
-    }
-  }
-
-  scored.sort((a, b) => b.score - a.score)
-  return scored.map(s => s.word).slice(0, 9)
+/**
+ * Generate candidate items with matchedLength info (internal use).
+ */
+function getCandidateItems(buffer: string): CandidateItem[] {
+  if (!buffer) return []
+  return engine.getCandidates(buffer).candidates.slice(0, 9)
 }
 
 /**
@@ -66,6 +41,8 @@ export function getTargetDigit(candidates: string[], target: string): string | n
 export interface IMEState {
   buffer: string
   candidates: string[]
+  /** matchedLength per candidate (parallel to candidates array). */
+  matchedLengths: number[]
   /** Set to the committed word when user presses a digit; null otherwise. */
   committed: string | null
   /** The digit key pressed that triggered a commit. */
@@ -75,6 +52,7 @@ export interface IMEState {
 export const IME_INITIAL: IMEState = {
   buffer: '',
   candidates: [],
+  matchedLengths: [],
   committed: null,
   pressedDigit: null,
 }
@@ -82,6 +60,10 @@ export const IME_INITIAL: IMEState = {
 /**
  * Pure transition function for the IME state machine.
  * Handles: a-z letters (append to buffer), backspace (remove last), 1-9 digits (commit).
+ *
+ * Key difference from the old engine: on digit selection, only the matched
+ * portion of the buffer is consumed. The remainder stays in the buffer with
+ * fresh candidates — enabling continuous long-sentence input.
  */
 export function imeStep(state: IMEState, key: string): IMEState {
   // Always clear committed/pressedDigit on a new key
@@ -89,18 +71,42 @@ export function imeStep(state: IMEState, key: string): IMEState {
 
   if (/^[a-z]$/.test(key)) {
     const buffer = base.buffer + key
-    return { ...base, buffer, candidates: getCandidates(buffer) }
+    const items = getCandidateItems(buffer)
+    return {
+      ...base,
+      buffer,
+      candidates: items.map(c => c.word),
+      matchedLengths: items.map(c => c.matchedLength),
+    }
   }
 
   if (key === 'backspace') {
     const buffer = base.buffer.slice(0, -1)
-    return { ...base, buffer, candidates: buffer ? getCandidates(buffer) : [] }
+    if (!buffer) return IME_INITIAL
+    const items = getCandidateItems(buffer)
+    return {
+      ...base,
+      buffer,
+      candidates: items.map(c => c.word),
+      matchedLengths: items.map(c => c.matchedLength),
+    }
   }
 
   if (/^[1-9]$/.test(key)) {
     const idx = Number(key) - 1
     const word = base.candidates[idx]
-    if (word) return { buffer: '', candidates: [], committed: word, pressedDigit: key }
+    const consumed = base.matchedLengths[idx]
+    if (word && consumed !== undefined) {
+      const remaining = base.buffer.slice(consumed)
+      const items = remaining ? getCandidateItems(remaining) : []
+      return {
+        buffer: remaining,
+        candidates: items.map(c => c.word),
+        matchedLengths: items.map(c => c.matchedLength),
+        committed: word,
+        pressedDigit: key,
+      }
+    }
   }
 
   return base

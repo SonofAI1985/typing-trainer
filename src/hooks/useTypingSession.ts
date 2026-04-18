@@ -120,7 +120,7 @@ function sessionReducer(state: TypingSession, action: SessionAction): TypingSess
       return {
         ...state,
         currentIndex: nextIndex,
-        imeState: IME_INITIAL,
+        imeState: newIME.buffer ? newIME : IME_INITIAL,
         keyResults: [...state.keyResults, ...krs],
         itemResults: [...state.itemResults, itemRes],
         startTime,
