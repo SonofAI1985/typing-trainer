@@ -6,11 +6,23 @@ interface Props {
   itemResults: ItemResult[]
   imeBuffer: string
   imeCandidates: string[]
+  imePage?: number
+  imeTotalPages?: number
 }
 
 // ─── Live candidate bar ───────────────────────────────────────────────────
 
-function CandidateBar({ candidates, target }: { candidates: string[]; target: string }) {
+function CandidateBar({
+  candidates,
+  target,
+  page = 0,
+  totalPages = 1,
+}: {
+  candidates: string[]
+  target: string
+  page?: number
+  totalPages?: number
+}) {
   if (!candidates.length) return null
   return (
     <div className="flex items-center gap-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs shadow-lg">
@@ -31,6 +43,11 @@ function CandidateBar({ candidates, target }: { candidates: string[]; target: st
           </span>
         )
       })}
+      {totalPages > 1 && (
+        <span className="text-[10px] text-gray-500 ml-1 whitespace-nowrap">
+          {page + 1}/{totalPages} (+/-)
+        </span>
+      )}
     </div>
   )
 }
@@ -84,7 +101,7 @@ function DonePinyinRow({ pinyin, correct }: { pinyin: string; correct: boolean }
 
 // ─── Main component ───────────────────────────────────────────────────────
 
-export function TextDisplay({ sequence, currentIndex, itemResults, imeBuffer, imeCandidates }: Props) {
+export function TextDisplay({ sequence, currentIndex, itemResults, imeBuffer, imeCandidates, imePage = 0, imeTotalPages = 1 }: Props) {
   // Build a lookup: itemIndex → ItemResult
   const resultByIndex = new Map(itemResults.map(r => [r.itemIndex, r]))
 
@@ -97,7 +114,7 @@ export function TextDisplay({ sequence, currentIndex, itemResults, imeBuffer, im
     <div className="flex flex-col gap-2">
       {/* Live candidate bar — shown above text when candidates are available */}
       {showCandidateBar && currentItem && (
-        <CandidateBar candidates={imeCandidates} target={currentItem.char} />
+        <CandidateBar candidates={imeCandidates} target={currentItem.char} page={imePage} totalPages={imeTotalPages} />
       )}
 
       {/* Text + pinyin grid */}

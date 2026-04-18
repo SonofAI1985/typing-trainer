@@ -2,7 +2,7 @@ import { useReducer, useEffect, useCallback, useRef } from 'react'
 import type { KeySequenceItem, KeyResult, ItemResult, SessionResult, SessionState, FingerStat } from '../types'
 import type { FingerName } from '../types'
 import { KEY_FINGER_MAP, KEY_TO_ID, FINGER_COLORS, FINGER_NAMES } from '../data/fingerMap'
-import { imeStep, getTargetDigit, IME_INITIAL, type IMEState } from '../core/imeEngine'
+import { imeStep, getTargetDigit, IME_INITIAL, PAGE_SIZE, type IMEState } from '../core/imeEngine'
 
 // ─── Session state ────────────────────────────────────────────────────────
 
@@ -23,33 +23,78 @@ type SessionAction =
   | { type: 'reset'; items: KeySequenceItem[] }
   | { type: 'tick'; now: number }
 
-// ─── Key-result generation for a committed Chinese item ───────────────────
+// ─── Multi-item matching ─────────────────────────────────────────────────
 
 /**
- * Build keystroke-level KeyResult records for a committed Chinese item.
- * Compares the final buffer to the expected pinyin letter-by-letter,
- * then records the digit selection.
+ * Given a committed word and the items from currentIndex onward,
+ * find how many consecutive Chinese items it covers.
+ *
+ * E.g. committed = "床前", items = [{char:"床"}, {char:"前"}, ...] → 2
+ * E.g. committed = "床前", items = [{char:"床前"}, ...] → 1  (phrase item)
+ * E.g. committed = "传", items = [{char:"床"}, ...] → 1  (wrong but still advance)
  */
-function buildKeyResults(
-  expectedPinyin: string,
-  finalBuffer: string,
+function matchCommittedToItems(committed: string, items: KeySequenceItem[], startIdx: number): number {
+  // First check: does it match the current item exactly (phrase mode)?
+  const first = items[startIdx]
+  if (first && first.char === committed) return 1
+
+  // Try to match character by character across consecutive Chinese items
+  let matched = 0
+  let charPos = 0
+  for (let i = startIdx; i < items.length && charPos < committed.length; i++) {
+    const item = items[i]
+    if (item.type !== 'chinese') break
+    const itemChars = [...item.char]
+    let itemMatch = true
+    for (const c of itemChars) {
+      if (charPos >= committed.length || committed[charPos] !== c) {
+        itemMatch = false
+        break
+      }
+      charPos++
+    }
+    if (itemMatch) matched++
+    else break
+  }
+
+  // At minimum advance 1 item (even if wrong selection)
+  return Math.max(1, matched)
+}
+
+/**
+ * Build keystroke-level KeyResult records for committed Chinese items.
+ * Records the pinyin letters typed and the digit selection.
+ */
+function buildKeyResultsForCommit(
+  items: KeySequenceItem[],
+  startIdx: number,
+  itemCount: number,
+  bufferBeforeCommit: string,
   candidatesAtCommit: string[],
-  target: string,
+  committed: string,
   pressedDigit: string,
   timestamp: number,
 ): KeyResult[] {
   const krs: KeyResult[] = []
 
+  // Concatenate expected pinyin for all matched items
+  let expectedPinyin = ''
+  for (let i = startIdx; i < startIdx + itemCount && i < items.length; i++) {
+    if (items[i].type === 'chinese') expectedPinyin += items[i].pinyin
+  }
+
   for (let i = 0; i < expectedPinyin.length; i++) {
     krs.push({
       expected: expectedPinyin[i],
-      actual: finalBuffer[i] ?? '',
-      correct: finalBuffer[i] === expectedPinyin[i],
+      actual: bufferBeforeCommit[i] ?? '',
+      correct: bufferBeforeCommit[i] === expectedPinyin[i],
       timestamp,
     })
   }
 
-  const expectedDigit = getTargetDigit(candidatesAtCommit, target) ?? '1'
+  // The digit/space selection
+  const target = items.slice(startIdx, startIdx + itemCount).map(it => it.char).join('')
+  const expectedDigit = getTargetDigit(candidatesAtCommit, target) ?? getTargetDigit(candidatesAtCommit, committed) ?? '1'
   krs.push({
     expected: expectedDigit,
     actual: pressedDigit,
@@ -88,33 +133,63 @@ function sessionReducer(state: TypingSession, action: SessionAction): TypingSess
 
   const startTime = state.startTime ?? now
 
+  // If IME has an active buffer, route all keys through the Chinese handler
+  // regardless of current item type (handles carry-over from previous word)
+  const hasIMEBuffer = state.imeState.buffer.length > 0
+
   // ── Chinese: route through IME ──────────────────────────────────────────
-  if (item.type === 'chinese') {
+  if (item.type === 'chinese' || hasIMEBuffer) {
     // Backspace only affects the buffer, never starts the timer
     if (key === 'backspace') {
+      return { ...state, imeState: imeStep(state.imeState, key) }
+    }
+
+    // Page navigation doesn't start the timer either
+    if (key === '+' || key === '=' || key === '-' || key === 'pagedown' || key === 'pageup') {
+      if (!state.imeState.buffer) return state
       return { ...state, imeState: imeStep(state.imeState, key) }
     }
 
     const newIME = imeStep(state.imeState, key)
 
     if (newIME.committed !== null) {
-      // User selected a candidate — record results and advance
-      const krs = buildKeyResults(
-        item.pinyin,
-        state.imeState.buffer,       // pre-commit buffer
-        state.imeState.candidates,   // pre-commit candidates
-        item.char,
-        action.key,
+      // User selected a candidate — figure out how many items it covers
+      const itemsCovered = matchCommittedToItems(
+        newIME.committed,
+        state.items,
+        state.currentIndex,
+      )
+
+      const krs = buildKeyResultsForCommit(
+        state.items,
+        state.currentIndex,
+        itemsCovered,
+        state.imeState.buffer,
+        state.imeState.candidates,
+        newIME.committed,
+        newIME.pressedDigit ?? key,
         now,
       )
 
-      const itemRes: ItemResult = {
-        itemIndex: state.currentIndex,
-        committed: newIME.committed,
-        correct: newIME.committed === item.char,
+      // Build item results for each covered item
+      const newItemResults: ItemResult[] = []
+      const committedChars = [...newIME.committed]
+      let charPos = 0
+      for (let i = 0; i < itemsCovered; i++) {
+        const idx = state.currentIndex + i
+        const it = state.items[idx]
+        if (!it) break
+        const itemChars = [...it.char]
+        const slice = committedChars.slice(charPos, charPos + itemChars.length).join('')
+        charPos += itemChars.length
+        newItemResults.push({
+          itemIndex: idx,
+          committed: slice || newIME.committed,
+          correct: slice === it.char,
+        })
       }
 
-      const nextIndex = state.currentIndex + 1
+      const nextIndex = state.currentIndex + itemsCovered
       const isComplete = nextIndex >= state.items.length
 
       return {
@@ -122,7 +197,7 @@ function sessionReducer(state: TypingSession, action: SessionAction): TypingSess
         currentIndex: nextIndex,
         imeState: newIME.buffer ? newIME : IME_INITIAL,
         keyResults: [...state.keyResults, ...krs],
-        itemResults: [...state.itemResults, itemRes],
+        itemResults: [...state.itemResults, ...newItemResults],
         startTime,
         endTime: isComplete ? now : null,
         status: isComplete ? 'complete' : 'typing',
@@ -172,18 +247,29 @@ function sessionReducer(state: TypingSession, action: SessionAction): TypingSess
  * Compute the next key the user should press based on the current item and IME state.
  * For Chinese: the next expected pinyin letter, or the selection digit.
  * For English/space: the character itself.
+ *
+ * If the candidate is not on the current page, hints '+' for page navigation.
  */
 function computeExpectedKey(item: KeySequenceItem | null, imeState: IMEState): string | null {
   if (!item) return null
   if (item.type === 'space') return ' '
   if (item.type === 'english') return item.char.toLowerCase()
 
-  // Chinese — guide through pinyin letters first, then digit
-  const { buffer, candidates } = imeState
+  // Chinese — guide through pinyin letters first, then digit/page
+  const { buffer, candidates, allCandidates } = imeState
   if (buffer.length < item.pinyin.length) {
     return item.pinyin[buffer.length]
   }
-  return getTargetDigit(candidates, item.char) ?? '1'
+
+  // Buffer is long enough — check if target is on current page
+  const pageDigit = getTargetDigit(candidates, item.char)
+  if (pageDigit) return pageDigit
+
+  // Not on current page — is it in allCandidates? Hint page navigation.
+  if (allCandidates.includes(item.char)) return '+'
+
+  // Not found at all — just guide to '1' (user will need to pick something)
+  return '1'
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────
@@ -277,6 +363,8 @@ export function useTypingSession(initialItems: KeySequenceItem[]) {
     itemResults: session.itemResults,
     imeBuffer: session.imeState.buffer,
     imeCandidates: session.imeState.candidates,
+    imePage: session.imeState.page,
+    imeTotalPages: Math.max(1, Math.ceil(session.imeState.allCandidates.length / PAGE_SIZE)),
     expectedKey,
     elapsed,
     wpm,

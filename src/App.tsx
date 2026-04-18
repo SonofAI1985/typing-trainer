@@ -44,8 +44,8 @@ export default function App() {
   expectedKeyRef.current = session.expectedKey
 
   const handleKeyPress = useCallback((key: string) => {
-    // Backspace only affects the IME buffer — no audio or streak changes
-    if (key === 'backspace') {
+    // Backspace and page navigation only affect the IME — no audio or streak changes
+    if (key === 'backspace' || key === '+' || key === '=' || key === '-' || key === 'pageup' || key === 'pagedown') {
       session.handleKeyPress(key)
       return
     }
@@ -224,6 +224,8 @@ export default function App() {
               itemResults={session.itemResults}
               imeBuffer={session.imeBuffer}
               imeCandidates={session.imeCandidates}
+              imePage={session.imePage}
+              imeTotalPages={session.imeTotalPages}
             />
 
             <StatsBar

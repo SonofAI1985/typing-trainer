@@ -6,30 +6,30 @@ import type { CandidateItem } from 'pinyin-ime'
 
 const engine = createPinyinEngine(dict)
 
-// ── Public helpers (same signatures as before) ───────────────────────────────
+/** Candidates per page (digits 1–9). */
+export const PAGE_SIZE = 9
+
+// ── Public helpers ───────────────────────────────────────────────────────────
 
 /**
  * Generate an ordered candidate list (strings only) for the given pinyin buffer.
- * Delegates to pinyin-ime's engine which handles syllable segmentation,
- * trie prefix lookup, and frequency-based ranking.
  */
 export function getCandidates(buffer: string): string[] {
   if (!buffer) return []
-  const result = engine.getCandidates(buffer)
-  return result.candidates.slice(0, 9).map(c => c.word)
+  return engine.getCandidates(buffer).candidates.map(c => c.word)
 }
 
 /**
- * Generate candidate items with matchedLength info (internal use).
+ * Get all candidate items with matchedLength info.
  */
-function getCandidateItems(buffer: string): CandidateItem[] {
+function getAllCandidateItems(buffer: string): CandidateItem[] {
   if (!buffer) return []
-  return engine.getCandidates(buffer).candidates.slice(0, 9)
+  return engine.getCandidates(buffer).candidates
 }
 
 /**
- * Find the 1-based digit key that selects `target` from candidates.
- * Returns null if target isn't in the list.
+ * Find the 1-based digit key that selects `target` from the visible page.
+ * Returns null if target isn't on the current page.
  */
 export function getTargetDigit(candidates: string[], target: string): string | null {
   const idx = candidates.indexOf(target)
@@ -40,8 +40,15 @@ export function getTargetDigit(candidates: string[], target: string): string | n
 
 export interface IMEState {
   buffer: string
+  /** All candidates (not just current page). */
+  allCandidates: string[]
+  /** matchedLength per candidate (parallel to allCandidates). */
+  allMatchedLengths: number[]
+  /** Current page index (0-based). */
+  page: number
+  /** Visible candidates on the current page (derived, for convenience). */
   candidates: string[]
-  /** matchedLength per candidate (parallel to candidates array). */
+  /** matchedLengths for current page (derived). */
   matchedLengths: number[]
   /** Set to the committed word when user presses a digit; null otherwise. */
   committed: string | null
@@ -49,8 +56,33 @@ export interface IMEState {
   pressedDigit: string | null
 }
 
+function buildPagedState(
+  buffer: string,
+  allItems: CandidateItem[],
+  page: number,
+  extra?: { committed: string | null; pressedDigit: string | null },
+): IMEState {
+  const totalPages = Math.max(1, Math.ceil(allItems.length / PAGE_SIZE))
+  const safePage = Math.max(0, Math.min(page, totalPages - 1))
+  const start = safePage * PAGE_SIZE
+  const pageItems = allItems.slice(start, start + PAGE_SIZE)
+  return {
+    buffer,
+    allCandidates: allItems.map(c => c.word),
+    allMatchedLengths: allItems.map(c => c.matchedLength),
+    page: safePage,
+    candidates: pageItems.map(c => c.word),
+    matchedLengths: pageItems.map(c => c.matchedLength),
+    committed: extra?.committed ?? null,
+    pressedDigit: extra?.pressedDigit ?? null,
+  }
+}
+
 export const IME_INITIAL: IMEState = {
   buffer: '',
+  allCandidates: [],
+  allMatchedLengths: [],
+  page: 0,
   candidates: [],
   matchedLengths: [],
   committed: null,
@@ -59,55 +91,73 @@ export const IME_INITIAL: IMEState = {
 
 /**
  * Pure transition function for the IME state machine.
- * Handles: a-z letters (append to buffer), backspace (remove last), 1-9 digits (commit).
  *
- * Key difference from the old engine: on digit selection, only the matched
- * portion of the buffer is consumed. The remainder stays in the buffer with
- * fresh candidates — enabling continuous long-sentence input.
+ * Keys handled:
+ * - a-z: append to buffer, reset to page 0
+ * - backspace: remove last char
+ * - 1-9: commit candidate at that position on current page
+ * - +/=: next page
+ * - -: previous page
+ * - space: commit first candidate on current page (same as pressing 1)
  */
 export function imeStep(state: IMEState, key: string): IMEState {
-  // Always clear committed/pressedDigit on a new key
-  const base: IMEState = { ...state, committed: null, pressedDigit: null }
-
+  // ── Letters: append to buffer, reset page ──────────────────────────────
   if (/^[a-z]$/.test(key)) {
-    const buffer = base.buffer + key
-    const items = getCandidateItems(buffer)
-    return {
-      ...base,
-      buffer,
-      candidates: items.map(c => c.word),
-      matchedLengths: items.map(c => c.matchedLength),
-    }
+    const buffer = state.buffer + key
+    return buildPagedState(buffer, getAllCandidateItems(buffer), 0)
   }
 
+  // ── Backspace ──────────────────────────────────────────────────────────
   if (key === 'backspace') {
-    const buffer = base.buffer.slice(0, -1)
+    const buffer = state.buffer.slice(0, -1)
     if (!buffer) return IME_INITIAL
-    const items = getCandidateItems(buffer)
-    return {
-      ...base,
-      buffer,
-      candidates: items.map(c => c.word),
-      matchedLengths: items.map(c => c.matchedLength),
-    }
+    return buildPagedState(buffer, getAllCandidateItems(buffer), 0)
   }
 
+  // ── Page navigation ────────────────────────────────────────────────────
+  if (key === '+' || key === '=' || key === 'pagedown') {
+    return buildPagedState(
+      state.buffer,
+      state.allCandidates.map((w, i) => ({ word: w, matchedLength: state.allMatchedLengths[i] })),
+      state.page + 1,
+    )
+  }
+  if (key === '-' || key === 'pageup') {
+    return buildPagedState(
+      state.buffer,
+      state.allCandidates.map((w, i) => ({ word: w, matchedLength: state.allMatchedLengths[i] })),
+      state.page - 1,
+    )
+  }
+
+  // ── Space: shortcut for selecting first candidate ──────────────────────
+  if (key === ' ') {
+    return commitAtIndex(state, 0)
+  }
+
+  // ── Digit selection ────────────────────────────────────────────────────
   if (/^[1-9]$/.test(key)) {
-    const idx = Number(key) - 1
-    const word = base.candidates[idx]
-    const consumed = base.matchedLengths[idx]
-    if (word && consumed !== undefined) {
-      const remaining = base.buffer.slice(consumed)
-      const items = remaining ? getCandidateItems(remaining) : []
-      return {
-        buffer: remaining,
-        candidates: items.map(c => c.word),
-        matchedLengths: items.map(c => c.matchedLength),
-        committed: word,
-        pressedDigit: key,
-      }
-    }
+    return commitAtIndex(state, Number(key) - 1)
   }
 
-  return base
+  return { ...state, committed: null, pressedDigit: null }
+}
+
+/**
+ * Commit the candidate at the given index on the current page.
+ * Remaining buffer gets fresh candidates at page 0.
+ */
+function commitAtIndex(state: IMEState, pageIdx: number): IMEState {
+  const word = state.candidates[pageIdx]
+  const consumed = state.matchedLengths[pageIdx]
+  if (!word || consumed === undefined) {
+    return { ...state, committed: null, pressedDigit: null }
+  }
+
+  const remaining = state.buffer.slice(consumed)
+  const items = remaining ? getAllCandidateItems(remaining) : []
+  return buildPagedState(remaining, items, 0, {
+    committed: word,
+    pressedDigit: String(pageIdx + 1),
+  })
 }

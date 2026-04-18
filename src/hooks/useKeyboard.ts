@@ -17,9 +17,13 @@ export function useKeyboard(
       // Ignore modifier-only keys
       if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab',
            'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-           'Home', 'End', 'PageUp', 'PageDown', 'Insert', 'Delete',
+           'Home', 'End', 'Insert', 'Delete',
            'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
       ].includes(e.key)) return
+
+      // PageUp / PageDown → candidate paging
+      if (e.key === 'PageUp') { e.preventDefault(); onKeyPress('pageup'); return }
+      if (e.key === 'PageDown') { e.preventDefault(); onKeyPress('pagedown'); return }
 
       // Prevent default to stop browser/IME from intercepting
       e.preventDefault()
