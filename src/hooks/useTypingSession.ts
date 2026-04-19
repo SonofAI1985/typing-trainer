@@ -38,27 +38,23 @@ function matchCommittedToItems(committed: string, items: KeySequenceItem[], star
   const first = items[startIdx]
   if (first && first.char === committed) return 1
 
-  // Try to match character by character across consecutive Chinese items
-  let matched = 0
+  // Count how many items the committed word covers by character count.
+  // Even if the characters are wrong (e.g. committed "窗前" vs target "床前"),
+  // we advance by the number of characters — correctness is tracked in itemResults.
+  const committedChars = [...committed]
   let charPos = 0
-  for (let i = startIdx; i < items.length && charPos < committed.length; i++) {
+  let itemsCovered = 0
+
+  for (let i = startIdx; i < items.length && charPos < committedChars.length; i++) {
     const item = items[i]
     if (item.type !== 'chinese') break
-    const itemChars = [...item.char]
-    let itemMatch = true
-    for (const c of itemChars) {
-      if (charPos >= committed.length || committed[charPos] !== c) {
-        itemMatch = false
-        break
-      }
-      charPos++
-    }
-    if (itemMatch) matched++
-    else break
+    const itemCharCount = [...item.char].length
+    charPos += itemCharCount
+    itemsCovered++
   }
 
-  // At minimum advance 1 item (even if wrong selection)
-  return Math.max(1, matched)
+  // At minimum advance 1 item
+  return Math.max(1, itemsCovered)
 }
 
 /**
@@ -241,34 +237,98 @@ function sessionReducer(state: TypingSession, action: SessionAction): TypingSess
   }
 }
 
+// ─── Key-correctness check (for live audio/streak feedback) ──────────────
+// A keystroke is correct if it moves the current item(s) forward along any
+// valid path: typing the next pinyin letter, or selecting a candidate whose
+// characters match items starting at currentIndex.
+
+function wordMatchesItems(committed: string, items: KeySequenceItem[], startIdx: number): boolean {
+  const chars = [...committed]
+  let pos = 0
+  for (let i = startIdx; i < items.length && pos < chars.length; i++) {
+    const it = items[i]
+    if (it.type !== 'chinese') return false
+    for (const ch of [...it.char]) {
+      if (pos >= chars.length) break
+      if (chars[pos] !== ch) return false
+      pos++
+    }
+  }
+  return pos === chars.length
+}
+
+function checkKey(state: TypingSession, key: string): boolean {
+  if (state.status === 'complete') return false
+  const item = state.items[state.currentIndex]
+  if (!item) return false
+
+  const hasIMEBuffer = state.imeState.buffer.length > 0
+
+  if (item.type === 'chinese' || hasIMEBuffer) {
+    if (/^[a-z]$/.test(key)) {
+      let combined = ''
+      for (let i = state.currentIndex; i < state.items.length; i++) {
+        if (state.items[i].type !== 'chinese') break
+        combined += state.items[i].pinyin
+      }
+      return combined[state.imeState.buffer.length] === key
+    }
+    if (key === ' ' || /^[1-9]$/.test(key)) {
+      const pageIdx = key === ' ' ? 0 : Number(key) - 1
+      const word = state.imeState.candidates[pageIdx]
+      if (!word) return false
+      return wordMatchesItems(word, state.items, state.currentIndex)
+    }
+    return false
+  }
+
+  const expected = item.type === 'space' ? ' ' : item.char.toLowerCase()
+  return key === expected
+}
+
 // ─── Derived values ────────────────────────────────────────────────────────
 
 /**
  * Compute the next key the user should press based on the current item and IME state.
- * For Chinese: the next expected pinyin letter, or the selection digit.
- * For English/space: the character itself.
  *
- * If the candidate is not on the current page, hints '+' for page navigation.
+ * For continuous Chinese typing: concatenates pinyin for all consecutive Chinese
+ * items from currentIndex onward. If the buffer is still shorter than the combined
+ * pinyin, guide the next letter — allowing the user to type multiple words without
+ * stopping to press a digit for each one.
+ *
+ * When the buffer covers at least the current item's pinyin AND has candidates,
+ * the user MAY press digit/space to commit, but they can also keep typing.
  */
-function computeExpectedKey(item: KeySequenceItem | null, imeState: IMEState): string | null {
+function computeExpectedKey(
+  items: KeySequenceItem[],
+  currentIndex: number,
+  imeState: IMEState,
+): string | null {
+  const item = items[currentIndex] ?? null
   if (!item) return null
   if (item.type === 'space') return ' '
   if (item.type === 'english') return item.char.toLowerCase()
 
-  // Chinese — guide through pinyin letters first, then digit/page
   const { buffer, candidates, allCandidates } = imeState
-  if (buffer.length < item.pinyin.length) {
-    return item.pinyin[buffer.length]
+
+  // Build combined pinyin for consecutive Chinese items starting from currentIndex
+  let combinedPinyin = ''
+  for (let i = currentIndex; i < items.length; i++) {
+    if (items[i].type !== 'chinese') break
+    combinedPinyin += items[i].pinyin
   }
 
-  // Buffer is long enough — check if target is on current page
+  // If buffer is shorter than combined pinyin, guide the next letter
+  if (buffer.length < combinedPinyin.length) {
+    return combinedPinyin[buffer.length]
+  }
+
+  // Buffer covers all remaining pinyin — guide to digit/space
   const pageDigit = getTargetDigit(candidates, item.char)
   if (pageDigit) return pageDigit
 
-  // Not on current page — is it in allCandidates? Hint page navigation.
   if (allCandidates.includes(item.char)) return '+'
 
-  // Not found at all — just guide to '1' (user will need to pick something)
   return '1'
 }
 
@@ -294,8 +354,15 @@ export function useTypingSession(initialItems: KeySequenceItem[]) {
     }
   }, [session.startTime, session.status])
 
+  const sessionRef = useRef(session)
+  sessionRef.current = session
+
   const handleKeyPress = useCallback((key: string) => {
     dispatch({ type: 'key', key, now: Date.now() })
+  }, [])
+
+  const isKeyCorrect = useCallback((key: string) => {
+    return checkKey(sessionRef.current, key)
   }, [])
 
   const reset = useCallback((items: KeySequenceItem[]) => {
@@ -316,11 +383,7 @@ export function useTypingSession(initialItems: KeySequenceItem[]) {
   const wpm = elapsed > 0 ? Math.round((correctCount / 5) / (elapsed / 60_000)) : 0
   const accuracy = totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 100
 
-  const currentItem = session.currentIndex < session.items.length
-    ? session.items[session.currentIndex]
-    : null
-
-  const expectedKey = computeExpectedKey(currentItem, session.imeState)
+  const expectedKey = computeExpectedKey(session.items, session.currentIndex, session.imeState)
 
   // ── Build final session result ─────────────────────────────────────────
 
@@ -370,6 +433,7 @@ export function useTypingSession(initialItems: KeySequenceItem[]) {
     wpm,
     accuracy,
     handleKeyPress,
+    isKeyCorrect,
     reset,
     result: buildResult(),
   }

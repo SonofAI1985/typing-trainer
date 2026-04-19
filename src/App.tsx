@@ -40,9 +40,6 @@ export default function App() {
   const adaptive = useAdaptiveLearning(profile.currentUser)
   const session = useTypingSession(sequence)
 
-  const expectedKeyRef = useRef<string | null>(null)
-  expectedKeyRef.current = session.expectedKey
-
   const handleKeyPress = useCallback((key: string) => {
     // Backspace and page navigation only affect the IME — no audio or streak changes
     if (key === 'backspace' || key === '+' || key === '=' || key === '-' || key === 'pageup' || key === 'pagedown') {
@@ -52,8 +49,7 @@ export default function App() {
 
     unlockAudio()
     bgMusic.setState('typing')
-    const expected = expectedKeyRef.current
-    const correct = expected === key
+    const correct = session.isKeyCorrect(key)
     session.handleKeyPress(key)
     setLastKey(key)
     setLastCorrect(correct)

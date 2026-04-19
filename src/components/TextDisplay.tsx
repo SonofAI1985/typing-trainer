@@ -54,8 +54,18 @@ function CandidateBar({
 
 // ─── Pinyin progress row (shown below each char) ──────────────────────────
 
-/** For the CURRENT Chinese item: overlays the live buffer on top of expected pinyin. */
-function LivePinyinRow({ pinyin, buffer }: { pinyin: string; buffer: string }) {
+/** For a Chinese item being actively typed: overlays the (per-item) buffer slice on expected pinyin. */
+function LivePinyinRow({
+  pinyin,
+  buffer,
+  showCursor,
+  overflow = '',
+}: {
+  pinyin: string
+  buffer: string
+  showCursor: boolean
+  overflow?: string
+}) {
   return (
     <div className="flex items-center gap-px">
       {pinyin.split('').map((expected, i) => {
@@ -75,15 +85,12 @@ function LivePinyinRow({ pinyin, buffer }: { pinyin: string; buffer: string }) {
         )
       })}
 
-      {/* Extra characters typed beyond expected pinyin length */}
-      {buffer.length > pinyin.length && (
-        <span className="text-xs leading-none text-orange-400">
-          {buffer.slice(pinyin.length)}
-        </span>
+      {/* Overflow only on the last Chinese item if buffer exceeds combined pinyin */}
+      {overflow && (
+        <span className="text-xs leading-none text-orange-400">{overflow}</span>
       )}
 
-      {/* Blinking cursor when buffer is shorter than pinyin */}
-      {buffer.length < pinyin.length && (
+      {showCursor && (
         <span className="text-xs leading-none text-yellow-300 animate-pulse">_</span>
       )}
     </div>
@@ -109,6 +116,36 @@ export function TextDisplay({ sequence, currentIndex, itemResults, imeBuffer, im
   const showCandidateBar =
     currentItem?.type === 'chinese' &&
     imeCandidates.length > 0
+
+  // Distribute IME buffer letters across consecutive Chinese items from currentIndex.
+  // Lets phrases like "chuangqian" color correctly across "床" and "前" pinyin rows.
+  const liveMap = new Map<number, { slice: string; showCursor: boolean; overflow: string }>()
+  if (currentItem?.type === 'chinese') {
+    let offset = 0
+    let cursorPlaced = false
+    let lastIdx = currentIndex
+    for (let i = currentIndex; i < sequence.length; i++) {
+      const it = sequence[i]
+      if (it.type !== 'chinese') break
+      if (i > currentIndex && offset >= imeBuffer.length) break
+      const pinyinLen = it.pinyin.length
+      const slice = imeBuffer.slice(offset, Math.min(imeBuffer.length, offset + pinyinLen))
+      const ends = offset + pinyinLen
+      const showCursor = !cursorPlaced && imeBuffer.length < ends
+      if (showCursor) cursorPlaced = true
+      liveMap.set(i, { slice, showCursor, overflow: '' })
+      offset += pinyinLen
+      lastIdx = i
+    }
+    // Buffer overruns combined pinyin: show tail as overflow on last item; cursor there too.
+    if (!cursorPlaced && imeBuffer.length > offset - (sequence[lastIdx]?.pinyin.length ?? 0)) {
+      const entry = liveMap.get(lastIdx)
+      if (entry) {
+        entry.overflow = imeBuffer.slice(offset)
+        entry.showCursor = true
+      }
+    }
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -160,10 +197,15 @@ export function TextDisplay({ sequence, currentIndex, itemResults, imeBuffer, im
               {/* Pinyin row */}
               {item.type === 'chinese' && (
                 <div className="flex items-center">
-                  {isCurrent ? (
-                    <LivePinyinRow pinyin={item.pinyin} buffer={imeBuffer} />
-                  ) : isDone ? (
+                  {isDone ? (
                     <DonePinyinRow pinyin={item.pinyin} correct={result?.correct ?? false} />
+                  ) : liveMap.has(idx) ? (
+                    <LivePinyinRow
+                      pinyin={item.pinyin}
+                      buffer={liveMap.get(idx)!.slice}
+                      showCursor={liveMap.get(idx)!.showCursor}
+                      overflow={liveMap.get(idx)!.overflow}
+                    />
                   ) : (
                     <span className="text-xs leading-none text-gray-600">{item.pinyin}</span>
                   )}
