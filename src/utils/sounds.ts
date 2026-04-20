@@ -7,18 +7,29 @@ function getCtx(): AudioContext {
   return ctx
 }
 
-// Capture-phase listener: pre-warm resume before React handlers fire
+// Resume the context whenever it isn't running (suspended or interrupted).
+function tryResume(): void {
+  if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
+}
+
 if (typeof window !== 'undefined') {
-  const tryResume = () => {
-    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {})
-  }
+  // Capture-phase: pre-warm resume before React handlers fire on user gestures
   window.addEventListener('click',      tryResume, true)
   window.addEventListener('keydown',    tryResume, true)
   window.addEventListener('touchstart', tryResume, { capture: true, passive: true })
+  // Proactive resume when tab regains focus — prevents "sounds gone after switching tabs"
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') tryResume()
+  })
 }
 
 export function unlockAudio(): void {
-  const c = getCtx()
+  let c: AudioContext
+  try {
+    c = getCtx()
+  } catch (_) {
+    return  // AudioContext unavailable (e.g. browser restriction); skip silently
+  }
   // iOS Safari: must start a real BufferSource synchronously inside the gesture
   try {
     const buf = c.createBuffer(1, 1, c.sampleRate)
