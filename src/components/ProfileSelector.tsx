@@ -13,7 +13,7 @@ interface Props {
   error: string | null
   onSelect: (id: string) => void
   onCreate: (name: string, color: string) => void
-  onUpdate: (id: string, patch: { name?: string; color?: string; avatar?: string }) => Promise<boolean>
+  onUpdate: (id: string, patch: { name?: string; color?: string; avatar?: string }) => boolean | Promise<boolean>
   onLoad: () => void
 }
 
@@ -105,9 +105,7 @@ export function ProfileSelector({ users, loading, error, onSelect, onCreate, onU
 
       {error && (
         <div className="bg-red-900/50 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm max-w-sm text-center">
-          无法连接后端服务（{error}）
-          <br />
-          <span className="text-red-400 text-xs">请先运行 start.command 或 node server.js</span>
+          加载失败（{error}）
         </div>
       )}
 

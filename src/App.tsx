@@ -149,12 +149,12 @@ export default function App() {
             loading={profile.loading}
             error={profile.error}
             onLoad={profile.loadUsers}
-            onSelect={async (id) => {
-              await profile.selectUser(id)
+            onSelect={(id) => {
+              profile.selectUser(id)
               setScreen('select')
             }}
-            onCreate={async (name, color) => {
-              await profile.createUser(name, color)
+            onCreate={(name, color) => {
+              profile.createUser(name, color)
               setScreen('select')
             }}
             onUpdate={profile.updateUser}

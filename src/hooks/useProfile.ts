@@ -1,110 +1,103 @@
 import { useState, useCallback } from 'react'
 import type { UserProfile, UserSummary, SessionSummary, KeyStat } from '../types'
 
-const API = 'http://localhost:3001/api'
+// ── localStorage helpers ──────────────────────────────────────────────────────
+
+const STORAGE_KEY = 'typing-trainer-users'
+
+function loadAllProfiles(): UserProfile[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+function saveAllProfiles(profiles: UserProfile[]): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles))
+}
+
+function profileToSummary(p: UserProfile): UserSummary {
+  const lastSession = p.sessions[p.sessions.length - 1] ?? null
+  return {
+    id: p.id,
+    name: p.name,
+    color: p.color,
+    avatar: p.avatar,
+    sessionCount: p.sessions.length,
+    lastWpm: lastSession?.wpm ?? null,
+  }
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useProfile() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
   const [users, setUsers] = useState<UserSummary[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [loading] = useState(false)
+  const [error] = useState<string | null>(null)
 
-  const loadUsers = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch(`${API}/users`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setUsers(await res.json())
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '加载失败')
-    } finally {
-      setLoading(false)
-    }
+  const loadUsers = useCallback(() => {
+    const profiles = loadAllProfiles()
+    setUsers(profiles.map(profileToSummary))
   }, [])
 
-  const selectUser = useCallback(async (id: string) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch(`${API}/users/${id}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setCurrentUser(await res.json())
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '加载失败')
-    } finally {
-      setLoading(false)
-    }
+  const selectUser = useCallback((id: string) => {
+    const profiles = loadAllProfiles()
+    const user = profiles.find(p => p.id === id) ?? null
+    setCurrentUser(user)
   }, [])
 
-  const createUser = useCallback(async (name: string, color: string): Promise<UserProfile | null> => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch(`${API}/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, color }),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const user: UserProfile = await res.json()
-      setCurrentUser(user)
-      return user
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '创建失败')
-      return null
-    } finally {
-      setLoading(false)
+  const createUser = useCallback((name: string, color: string): UserProfile | null => {
+    const profiles = loadAllProfiles()
+    const user: UserProfile = {
+      id: crypto.randomUUID(),
+      name,
+      color,
+      avatar: undefined,
+      createdAt: new Date().toISOString(),
+      keyStats: {},
+      sessions: [],
     }
+    profiles.push(user)
+    saveAllProfiles(profiles)
+    setCurrentUser(user)
+    setUsers(profiles.map(profileToSummary))
+    return user
   }, [])
 
-  const saveSession = useCallback(async (
+  const saveSession = useCallback((
     session: SessionSummary,
     updatedKeyStats: Record<string, KeyStat>,
   ) => {
     if (!currentUser) return
-    try {
-      await fetch(`${API}/users/${currentUser.id}/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session, keyStats: updatedKeyStats }),
-      })
-      // Update local state optimistically
-      setCurrentUser(prev => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          sessions: [...prev.sessions, session],
-          keyStats: { ...prev.keyStats, ...updatedKeyStats },
-        }
-      })
-    } catch (e) {
-      console.error('Failed to save session:', e)
+    const profiles = loadAllProfiles()
+    const idx = profiles.findIndex(p => p.id === currentUser.id)
+    if (idx === -1) return
+    const updated: UserProfile = {
+      ...profiles[idx],
+      sessions: [...profiles[idx].sessions, session],
+      keyStats: { ...profiles[idx].keyStats, ...updatedKeyStats },
     }
+    profiles[idx] = updated
+    saveAllProfiles(profiles)
+    setCurrentUser(updated)
+    setUsers(profiles.map(profileToSummary))
   }, [currentUser])
 
-  const updateUser = useCallback(async (
+  const updateUser = useCallback((
     id: string,
     patch: { name?: string; color?: string; avatar?: string },
-  ): Promise<boolean> => {
-    try {
-      const res = await fetch(`${API}/users/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const updated = await res.json()
-      // Refresh users list summary
-      setUsers(prev => prev.map(u => u.id === id
-        ? { ...u, name: updated.name, color: updated.color, avatar: updated.avatar }
-        : u
-      ))
-      if (currentUser?.id === id) setCurrentUser(updated)
-      return true
-    } catch {
-      return false
-    }
+  ): boolean => {
+    const profiles = loadAllProfiles()
+    const idx = profiles.findIndex(p => p.id === id)
+    if (idx === -1) return false
+    profiles[idx] = { ...profiles[idx], ...patch }
+    saveAllProfiles(profiles)
+    setUsers(profiles.map(profileToSummary))
+    if (currentUser?.id === id) setCurrentUser(profiles[idx])
+    return true
   }, [currentUser])
 
   const logout = useCallback(() => {
